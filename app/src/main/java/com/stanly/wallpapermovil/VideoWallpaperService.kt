@@ -17,19 +17,13 @@ import kotlinx.coroutines.launch
 /**
  * Live Wallpaper service powered by AndroidX Media3 ExoPlayer.
  *
- * Battery optimization:
- *  - Pauses on onVisibilityChanged(false) — user opens another app.
+ * Key design decisions:
+ *  - Uses `playWhenReady` instead of `onRenderedFirstFrame` listener.
+ *    This avoids a bug where the listener fires while the wallpaper is not
+ *    yet visible (system picker preview), causing the flag-check to skip
+ *    play() permanently → black wallpaper on home screen.
+ *  - Pauses on onVisibilityChanged(false) → battery optimization.
  *  - Resumes on onVisibilityChanged(true).
- *  - All resources released in onDestroy.
- *
- * Black-preview fix:
- *  - play() is called from the onRenderedFirstFrame listener so the surface
- *    never shows a black frame — the video only starts presenting once the
- *    first decoded frame is ready.
- *
- * NOTE: zoom/offsetX/offsetY stored in DataStore are used by the AdjustScreen
- * preview; the live wallpaper uses SCALE_TO_FIT_WITH_CROPPING which fills the
- * screen without letterboxing. Full GL-based crop will be a future enhancement.
  */
 class VideoWallpaperService : WallpaperService() {
 
@@ -41,8 +35,6 @@ class VideoWallpaperService : WallpaperService() {
         private val scope = CoroutineScope(Dispatchers.Main + Job())
         private var isVisible = true
         private var currentUri = ""
-
-        // ── Lifecycle ─────────────────────────────────────────────────────────
 
         override fun onCreate(surfaceHolder: SurfaceHolder) {
             super.onCreate(surfaceHolder)
@@ -65,10 +57,13 @@ class VideoWallpaperService : WallpaperService() {
             super.onSurfaceDestroyed(holder)
         }
 
+        /** Battery optimization: pause when off-screen, resume when visible. */
         override fun onVisibilityChanged(visible: Boolean) {
             super.onVisibilityChanged(visible)
             isVisible = visible
-            if (visible) player?.play() else player?.pause()
+            // playWhenReady on the player keeps state in sync even before
+            // the first media item is loaded.
+            player?.playWhenReady = visible
         }
 
         override fun onDestroy() {
@@ -77,8 +72,6 @@ class VideoWallpaperService : WallpaperService() {
             scope.cancel()
             super.onDestroy()
         }
-
-        // ── Private helpers ───────────────────────────────────────────────────
 
         private fun initPlayer(surfaceHolder: SurfaceHolder) {
             val audioAttributes = AudioAttributes.Builder()
@@ -92,16 +85,11 @@ class VideoWallpaperService : WallpaperService() {
                     exo.setAudioAttributes(audioAttributes, false)
                     exo.repeatMode = Player.REPEAT_MODE_ALL
                     exo.volume = 0f
-                    // Fill screen without letterboxing
+                    // Fill the screen without letterboxing
                     exo.setVideoScalingMode(C.VIDEO_SCALING_MODE_SCALE_TO_FIT_WITH_CROPPING)
                     exo.setVideoSurface(surfaceHolder.surface)
-
-                    // Black-preview fix: start playback only after first frame is decoded
-                    exo.addListener(object : Player.Listener {
-                        override fun onRenderedFirstFrame() {
-                            if (isVisible) exo.play()
-                        }
-                    })
+                    // Will play automatically when ExoPlayer reaches READY state
+                    exo.playWhenReady = isVisible
                 }
         }
 
@@ -115,7 +103,8 @@ class VideoWallpaperService : WallpaperService() {
                             currentUri = config.videoUri
                             exo.setMediaItem(MediaItem.fromUri(config.videoUri))
                             exo.prepare()
-                            // play() is triggered by onRenderedFirstFrame listener
+                            // playWhenReady=true/false is already set;
+                            // ExoPlayer will auto-play when it reaches READY state
                         }
 
                         exo.volume = if (config.isMuted) 0f else 1f

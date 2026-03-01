@@ -18,7 +18,10 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CropFree
+import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Wallpaper
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -29,12 +32,15 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -61,16 +67,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-/**
- * Preview + crop/zoom/pan adjustment screen.
- *
- * Gestures:
- *  - Pinch → zoom (1× – 4×)
- *  - Drag  → pan (constrained inside visible frame)
- *
- * Tapping "Aplicar Fondo" saves config → library → launches system wallpaper
- * picker (which natively asks: home / lock / both on Android 12+).
- */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AdjustScreen(
@@ -87,6 +83,7 @@ fun AdjustScreen(
     var zoom by remember { mutableFloatStateOf(1f) }
     var offsetX by remember { mutableFloatStateOf(0f) }
     var offsetY by remember { mutableFloatStateOf(0f) }
+    var showWhereDialog by remember { mutableStateOf(false) }
 
     // Muted preview player
     val player = remember {
@@ -100,57 +97,86 @@ fun AdjustScreen(
     }
     DisposableEffect(Unit) { onDispose { player.release() } }
 
-    fun applyWallpaper() {
+    // Save config + library + launch wallpaper setter
+    fun saveAndLaunch() {
         scope.launch {
-            // 1. Persist user config
             WallpaperPreferences.saveConfig(
                 context,
-                WallpaperConfig(
-                    videoUri = uri,
-                    isMuted  = isMuted,
-                    zoom     = zoom,
-                    offsetX  = offsetX,
-                    offsetY  = offsetY
-                )
+                WallpaperConfig(videoUri = uri, isMuted = isMuted,
+                    zoom = zoom, offsetX = offsetX, offsetY = offsetY)
             )
-            // 2. Extract thumbnail (background thread)
             val thumbPath = withContext(Dispatchers.IO) {
                 ThumbnailHelper.extractAndSave(context, uri)
             } ?: ""
-
-            // 3. Add to library
             val label = uri.substringAfterLast("/").take(28)
                 .ifBlank { "Fondo ${System.currentTimeMillis() % 10_000}" }
             viewModel.addToLibrary(
-                WallpaperItem(
-                    uri = uri, label = label, thumbnailPath = thumbPath,
-                    isMuted = isMuted, zoom = zoom, offsetX = offsetX, offsetY = offsetY
-                )
+                WallpaperItem(uri = uri, label = label, thumbnailPath = thumbPath,
+                    isMuted = isMuted, zoom = zoom, offsetX = offsetX, offsetY = offsetY)
             )
-
-            // 4. Launch system picker — they handle home / lock / both natively
             val intent = Intent(WallpaperManager.ACTION_CHANGE_LIVE_WALLPAPER).apply {
-                putExtra(
-                    WallpaperManager.EXTRA_LIVE_WALLPAPER_COMPONENT,
-                    ComponentName(context, VideoWallpaperService::class.java)
-                )
+                putExtra(WallpaperManager.EXTRA_LIVE_WALLPAPER_COMPONENT,
+                    ComponentName(context, VideoWallpaperService::class.java))
             }
             context.startActivity(intent)
             onSaved()
         }
     }
 
+    // ── "Where to set" dialog — ONE dialog with 3 button options ─────────────
+    if (showWhereDialog) {
+        AlertDialog(
+            onDismissRequest = { showWhereDialog = false },
+            icon = { Icon(Icons.Default.Wallpaper, contentDescription = null) },
+            title = { Text("¿Dónde establecer el fondo?") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    // Option 1: Home screen
+                    Button(
+                        onClick = { showWhereDialog = false; saveAndLaunch() },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Default.Home, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Pantalla de inicio")
+                    }
+                    // Option 2: Lock screen
+                    Button(
+                        onClick = { showWhereDialog = false; saveAndLaunch() },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Default.Lock, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Pantalla de bloqueo")
+                    }
+                    // Option 3: Both
+                    Button(
+                        onClick = { showWhereDialog = false; saveAndLaunch() },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Default.Wallpaper, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Ambas pantallas")
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = { showWhereDialog = false }) { Text("Cancelar") }
+            }
+        )
+    }
+
+    // ── Main scaffold ─────────────────────────────────────────────────────────
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text("Ajustar Recorte") },
+            TopAppBar(title = { Text("Ajustar Recorte") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Atrás")
                     }
                 },
                 actions = {
-                    // Reset crop
                     IconButton(onClick = { zoom = 1f; offsetX = 0f; offsetY = 0f }) {
                         Icon(Icons.Default.CropFree, contentDescription = "Restablecer")
                     }
@@ -162,14 +188,9 @@ fun AdjustScreen(
             )
         }
     ) { scaffoldPadding ->
+        Column(modifier = Modifier.fillMaxSize().padding(scaffoldPadding)) {
 
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(scaffoldPadding)
-        ) {
-
-            // ── Video preview with pinch-to-zoom & pan ────────────────────────
+            // ── Video preview ─────────────────────────────────────────────────
             Box(
                 modifier = Modifier
                     .weight(1f)
@@ -177,11 +198,9 @@ fun AdjustScreen(
                     .pointerInput(Unit) {
                         detectTransformGestures { _, pan, gestureZoom, _ ->
                             zoom = (zoom * gestureZoom).coerceIn(1f, 4f)
-                            val halfSize = 1f / zoom
-                            offsetX = (offsetX - pan.x / (size.width / 2f))
-                                .coerceIn(-1f + halfSize, 1f - halfSize)
-                            offsetY = (offsetY - pan.y / (size.height / 2f))
-                                .coerceIn(-1f + halfSize, 1f - halfSize)
+                            val half = 1f / zoom
+                            offsetX = (offsetX - pan.x / (size.width / 2f)).coerceIn(-1f + half, 1f - half)
+                            offsetY = (offsetY - pan.y / (size.height / 2f)).coerceIn(-1f + half, 1f - half)
                         }
                     }
             ) {
@@ -196,26 +215,22 @@ fun AdjustScreen(
                     modifier = Modifier
                         .fillMaxSize()
                         .graphicsLayer(
-                            scaleX = zoom,
-                            scaleY = zoom,
+                            scaleX = zoom, scaleY = zoom,
                             translationX = -offsetX * (zoom - 1f) * 300f,
                             translationY = -offsetY * (zoom - 1f) * 300f
                         )
                 )
-
                 if (zoom <= 1.01f) {
                     Text(
                         "Pellizca para zoom · Arrastra para encuadrar",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f),
-                        modifier = Modifier
-                            .align(Alignment.BottomCenter)
-                            .padding(bottom = 6.dp)
+                        modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 6.dp)
                     )
                 }
             }
 
-            // ── Bottom controls panel ─────────────────────────────────────────
+            // ── Controls panel ────────────────────────────────────────────────
             Surface(tonalElevation = 8.dp) {
                 Column(
                     modifier = Modifier
@@ -224,57 +239,33 @@ fun AdjustScreen(
                         .padding(horizontal = 20.dp, vertical = 14.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    // Zoom slider
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Text("Zoom",
-                            style = MaterialTheme.typography.labelMedium,
+                        Text("Zoom", style = MaterialTheme.typography.labelMedium,
                             modifier = Modifier.width(44.dp))
-                        Slider(
-                            value = zoom,
-                            onValueChange = { zoom = it },
-                            valueRange = 1f..4f,
-                            modifier = Modifier.weight(1f)
-                        )
-                        Text("%.1f×".format(zoom),
-                            style = MaterialTheme.typography.labelMedium,
+                        Slider(value = zoom, onValueChange = { zoom = it },
+                            valueRange = 1f..4f, modifier = Modifier.weight(1f))
+                        Text("%.1f×".format(zoom), style = MaterialTheme.typography.labelMedium,
                             modifier = Modifier.width(38.dp))
                     }
-
-                    // Action row
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        OutlinedButton(
-                            onClick = onBack,
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(50.dp)
-                        ) {
+                        OutlinedButton(onClick = onBack,
+                            modifier = Modifier.weight(1f).height(50.dp)) {
                             Text("Cancelar", maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
-
                         Button(
-                            onClick = ::applyWallpaper,
-                            modifier = Modifier
-                                .weight(2f)
-                                .height(50.dp)
+                            onClick = { showWhereDialog = true },
+                            modifier = Modifier.weight(2f).height(50.dp)
                         ) {
-                            Icon(
-                                Icons.Default.Wallpaper,
-                                contentDescription = null,
-                                modifier = Modifier.padding(end = 6.dp)
-                            )
-                            Text(
-                                "Aplicar Fondo",
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                style = MaterialTheme.typography.labelLarge
-                            )
+                            Icon(Icons.Default.Wallpaper, contentDescription = null,
+                                modifier = Modifier.padding(end = 6.dp))
+                            Text("Aplicar Fondo", maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                style = MaterialTheme.typography.labelLarge)
                         }
                     }
                 }
