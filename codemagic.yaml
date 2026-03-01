@@ -2,25 +2,16 @@
 # codemagic.yaml  –  WallpaperMovil
 #
 # Docs: https://docs.codemagic.io/yaml-quick-start/building-a-native-android-app/
-#
-# HOW TO USE:
-# 1. Push this project to a Git repository (GitHub / GitLab / Bitbucket).
-# 2. Connect the repo to Codemagic (https://codemagic.io).
-# 3. For release builds, add a Code Signing keystore under
-#    App Settings → Code signing → Android keystores.
-#    Name the keystore entry: wallpapermovil_keystore
-# 4. Trigger a build — Codemagic reads this file automatically.
 ###############################################################
 
 workflows:
-  # ── Debug build (no signing required) ───────────────────────────────────
+  # ── Debug build ──────────────────────────────────────────────────────────
   android-debug:
     name: WallpaperMovil – Debug APK
-    max_build_duration: 30 # minutes
+    max_build_duration: 30
 
     environment:
-      java: 17 # Codemagic's pre-installed JDK 17
-      # No android_signing block needed for debug builds
+      java: 17
 
     scripts:
       - name: Generate local.properties
@@ -37,28 +28,29 @@ workflows:
 
     artifacts:
       - app/build/outputs/apk/debug/*.apk
-      - app/build/outputs/mapping/debug/mapping.txt
 
     publishing:
       email:
         recipients:
-          - tu_email@ejemplo.com # ← Cambia a tu correo
+          - kevinstanly2000@gmail.com
         notify:
           success: true
           failure: true
 
-  # ── Release build (signed APK) ───────────────────────────────────────────
+  # ── Release build ─────────────────────────────────────────────────────────
+  # El APK de release se firma con el debug keystore por defecto.
+  # Para firmarlo con tu propio keystore:
+  #   1. Sube tu .jks en Codemagic → App Settings → Code signing → Android keystores
+  #   2. Nómbralo: wallpapermovil_keystore
+  #   3. Descomenta el bloque android_signing de abajo
   android-release:
-    name: WallpaperMovil – Release APK (Signed)
+    name: WallpaperMovil – Release APK
     max_build_duration: 60
 
     environment:
       java: 17
-      # Reference the keystore you uploaded to Codemagic.
-      # This auto-sets: CM_KEYSTORE_PATH, CM_KEYSTORE_PASSWORD,
-      #                 CM_KEY_ALIAS, CM_KEY_PASSWORD
-      android_signing:
-        - wallpapermovil_keystore
+      # android_signing:          # ← Descomenta cuando tengas el keystore listo
+      #   - wallpapermovil_keystore
 
     scripts:
       - name: Generate local.properties
@@ -75,12 +67,11 @@ workflows:
 
     artifacts:
       - app/build/outputs/apk/release/*.apk
-      - app/build/outputs/mapping/release/mapping.txt
 
     publishing:
       email:
         recipients:
-          - tu_email@ejemplo.com # ← Cambia a tu correo
+          - kevinstanly2000@gmail.com
         notify:
           success: true
           failure: true
