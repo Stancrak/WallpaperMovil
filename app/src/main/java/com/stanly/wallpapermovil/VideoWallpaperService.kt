@@ -6,6 +6,7 @@ import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
+import androidx.media3.effect.Crop
 import androidx.media3.exoplayer.ExoPlayer
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -15,31 +16,29 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
 /**
- * Live Wallpaper service that renders a looping video on the home screen
- * using AndroidX Media3 ExoPlayer.
+ * Live Wallpaper service powered by AndroidX Media3 ExoPlayer.
  *
  * Battery optimization:
- * - Playback is PAUSED when the wallpaper is not visible (user opens another app).
- * - Playback RESUMES when the home screen is visible again.
- * - All resources are released in [VideoEngine.onDestroy].
+ *  - Pauses when wallpaper is not visible (onVisibilityChanged false).
+ *  - Resumes when home screen returns.
+ *  - Resources released in onDestroy.
+ *
+ * Visual quality:
+ *  - Playback starts only after onRenderedFirstFrame to avoid black flash.
+ *  - Zoom / pan applied via media3-effect Crop GL effect.
  */
 class VideoWallpaperService : WallpaperService() {
 
     override fun onCreateEngine(): Engine = VideoEngine()
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // Inner Engine
-    // ─────────────────────────────────────────────────────────────────────────
-
     inner class VideoEngine : Engine() {
 
         private var player: ExoPlayer? = null
         private val scope = CoroutineScope(Dispatchers.Main + Job())
-
-        /** Tracks wallpaper visibility to avoid playing when off-screen. */
         private var isVisible = true
+        private var currentUri = ""
 
-        // ── Lifecycle ────────────────────────────────────────────────────────
+        // ── Lifecycle ─────────────────────────────────────────────────────────
 
         override fun onCreate(surfaceHolder: SurfaceHolder) {
             super.onCreate(surfaceHolder)
@@ -54,7 +53,6 @@ class VideoWallpaperService : WallpaperService() {
 
         override fun onSurfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
             super.onSurfaceChanged(holder, format, width, height)
-            // Re-attach surface when size changes (e.g. orientation flip).
             player?.setVideoSurface(holder.surface)
         }
 
@@ -63,19 +61,11 @@ class VideoWallpaperService : WallpaperService() {
             super.onSurfaceDestroyed(holder)
         }
 
-        /**
-         * Critical battery optimization:
-         * Pause when the wallpaper is hidden (another app in foreground),
-         * resume when the home screen comes back.
-         */
+        /** Battery optimization: pause/resume based on wallpaper visibility. */
         override fun onVisibilityChanged(visible: Boolean) {
             super.onVisibilityChanged(visible)
             isVisible = visible
-            if (visible) {
-                player?.play()
-            } else {
-                player?.pause()
-            }
+            if (visible) player?.play() else player?.pause()
         }
 
         override fun onDestroy() {
@@ -85,9 +75,8 @@ class VideoWallpaperService : WallpaperService() {
             super.onDestroy()
         }
 
-        // ── Private helpers ──────────────────────────────────────────────────
+        // ── Private helpers ───────────────────────────────────────────────────
 
-        /** Builds the ExoPlayer instance and attaches it to the provided surface. */
         private fun initPlayer(surfaceHolder: SurfaceHolder) {
             val audioAttributes = AudioAttributes.Builder()
                 .setUsage(C.USAGE_MEDIA)
@@ -97,44 +86,66 @@ class VideoWallpaperService : WallpaperService() {
             player = ExoPlayer.Builder(this@VideoWallpaperService)
                 .build()
                 .also { exo ->
-                    // Audio attributes (will be controlled via volume below)
-                    exo.setAudioAttributes(audioAttributes, /* handleAudioFocus= */ false)
-                    // Loop video indefinitely
+                    exo.setAudioAttributes(audioAttributes, false)
                     exo.repeatMode = Player.REPEAT_MODE_ALL
-                    // Default muted until prefs are loaded
                     exo.volume = 0f
-                    // Attach rendering surface
+                    // Scale to fill, cropping instead of letterboxing
+                    exo.setVideoScalingMode(C.VIDEO_SCALING_MODE_SCALE_TO_FIT_WITH_CROPPING)
                     exo.setVideoSurface(surfaceHolder.surface)
+
+                    // Fix black preview: start playback only after first frame is ready
+                    exo.addListener(object : Player.Listener {
+                        override fun onRenderedFirstFrame() {
+                            if (isVisible) exo.play()
+                        }
+                    })
                 }
         }
 
-        /**
-         * Observes DataStore preferences and reconfigures the player whenever
-         * the user changes the video URI or mute state.
-         */
         private fun observePreferences() {
             scope.launch {
                 WallpaperPreferences.getConfig(applicationContext)
                     .collectLatest { config ->
                         val exo = player ?: return@collectLatest
 
-                        if (config.videoUri.isNotBlank()) {
-                            val mediaItem = MediaItem.fromUri(config.videoUri)
-                            // Only reload if the URI actually changed to avoid re-buffering
-                            val currentUri = exo.currentMediaItem?.localConfiguration?.uri?.toString()
-                            if (currentUri != config.videoUri) {
-                                exo.setMediaItem(mediaItem)
-                                exo.prepare()
-                            }
+                        // Reload media only when URI changes (avoid re-buffering)
+                        if (config.videoUri.isNotBlank() && config.videoUri != currentUri) {
+                            currentUri = config.videoUri
+                            exo.setMediaItem(MediaItem.fromUri(config.videoUri))
+                            applyCropEffect(exo, config.zoom, config.offsetX, config.offsetY)
+                            exo.prepare()
+                            // play() will be triggered by onRenderedFirstFrame
+                        } else if (config.videoUri.isNotBlank()) {
+                            // URI unchanged — only update effects/volume live
+                            applyCropEffect(exo, config.zoom, config.offsetX, config.offsetY)
                         }
 
-                        // Apply mute preference
                         exo.volume = if (config.isMuted) 0f else 1f
-
-                        // Start playback only if the wallpaper is currently on screen
-                        if (isVisible) exo.play()
                     }
             }
+        }
+
+        /**
+         * Applies a [Crop] GL effect to [exo] based on zoom and pan values.
+         * When zoom == 1 and offsets == 0, no effect is applied (full frame).
+         */
+        private fun applyCropEffect(
+            exo: ExoPlayer,
+            zoom: Float,
+            offsetX: Float,
+            offsetY: Float
+        ) {
+            val zoomClamped = zoom.coerceIn(1f, 4f)
+            if (zoomClamped <= 1.01f && offsetX == 0f && offsetY == 0f) {
+                exo.setVideoEffects(emptyList())
+                return
+            }
+            val halfSize = 1f / zoomClamped
+            val left   = (offsetX - halfSize).coerceIn(-1f, 1f)
+            val right  = (offsetX + halfSize).coerceIn(-1f, 1f)
+            val bottom = (offsetY - halfSize).coerceIn(-1f, 1f)
+            val top    = (offsetY + halfSize).coerceIn(-1f, 1f)
+            exo.setVideoEffects(listOf(Crop(left, right, bottom, top)))
         }
     }
 }

@@ -5,50 +5,57 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
 /**
- * Data class representing the user's wallpaper configuration.
+ * Full configuration for the active live wallpaper.
  *
- * @param videoUri  Absolute file path or direct URL of the video to play.
- * @param isMuted   Whether audio should be silenced during wallpaper playback.
+ * @param videoUri  Absolute file path or direct URL of the video.
+ * @param isMuted   Whether audio is silenced during playback.
+ * @param zoom      Zoom level: 1.0 = full frame, 4.0 = 4× zoom.
+ * @param offsetX   Horizontal pan in NDC [-1, 1]. 0 = center.
+ * @param offsetY   Vertical pan in NDC [-1, 1]. 0 = center.
  */
 data class WallpaperConfig(
     val videoUri: String = "",
-    val isMuted: Boolean = true
+    val isMuted: Boolean = true,
+    val zoom: Float = 1f,
+    val offsetX: Float = 0f,
+    val offsetY: Float = 0f
 )
 
-/** DataStore instance scoped to the application context. */
 val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "wallpaper_prefs")
 
 object WallpaperPreferences {
 
-    private val VIDEO_URI_KEY = stringPreferencesKey("video_uri")
-    private val MUTE_KEY = booleanPreferencesKey("mute")
+    private val VIDEO_URI_KEY  = stringPreferencesKey("video_uri")
+    private val MUTE_KEY       = booleanPreferencesKey("mute")
+    private val ZOOM_KEY       = floatPreferencesKey("zoom")
+    private val OFFSET_X_KEY   = floatPreferencesKey("offset_x")
+    private val OFFSET_Y_KEY   = floatPreferencesKey("offset_y")
 
-    /**
-     * Returns a [Flow] of the current [WallpaperConfig].
-     * Collects from DataStore; emits the default config if nothing is saved yet.
-     */
     fun getConfig(context: Context): Flow<WallpaperConfig> =
         context.dataStore.data.map { prefs ->
             WallpaperConfig(
-                videoUri = prefs[VIDEO_URI_KEY] ?: "",
-                isMuted = prefs[MUTE_KEY] ?: true
+                videoUri  = prefs[VIDEO_URI_KEY]  ?: "",
+                isMuted   = prefs[MUTE_KEY]       ?: true,
+                zoom      = prefs[ZOOM_KEY]       ?: 1f,
+                offsetX   = prefs[OFFSET_X_KEY]   ?: 0f,
+                offsetY   = prefs[OFFSET_Y_KEY]   ?: 0f
             )
         }
 
-    /**
-     * Persists the given [WallpaperConfig] to DataStore.
-     * Must be called from a coroutine (suspend function).
-     */
     suspend fun saveConfig(context: Context, config: WallpaperConfig) {
         context.dataStore.edit { prefs ->
-            prefs[VIDEO_URI_KEY] = config.videoUri
-            prefs[MUTE_KEY] = config.isMuted
+            prefs[VIDEO_URI_KEY]  = config.videoUri
+            prefs[MUTE_KEY]       = config.isMuted
+            prefs[ZOOM_KEY]       = config.zoom
+            prefs[OFFSET_X_KEY]   = config.offsetX
+            prefs[OFFSET_Y_KEY]   = config.offsetY
         }
     }
 }

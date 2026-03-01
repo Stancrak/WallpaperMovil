@@ -2,7 +2,9 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.ksp)
 }
+
 
 android {
     namespace = "com.stanly.wallpapermovil"
@@ -14,7 +16,15 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "1.0"
+
+        // Room schema export
+        javaCompileOptions {
+            annotationProcessorOptions {
+                arguments["room.schemaLocation"] = "$projectDir/schemas"
+            }
+        }
     }
+
 
     // ── Signing ────────────────────────────────────────────────────────────────
     // Codemagic injects these four environment variables automatically when an
@@ -67,6 +77,7 @@ dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.runtime.compose)
+    implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.activity.compose)
 
     // Jetpack Compose (Material 3)
@@ -77,12 +88,21 @@ dependencies {
     implementation(libs.androidx.material3)
     implementation(libs.androidx.material.icons.extended)
 
-    // AndroidX Media3 – ExoPlayer
+    // Navigation Compose
+    implementation(libs.androidx.navigation.compose)
+
+    // AndroidX Media3 – ExoPlayer + GL Effects
     implementation(libs.media3.exoplayer)
     implementation(libs.media3.ui)
+    implementation(libs.media3.effect)
 
     // DataStore Preferences
     implementation(libs.datastore.preferences)
+
+    // Room Database
+    implementation(libs.room.runtime)
+    implementation(libs.room.ktx)
+    ksp(libs.room.compiler)
 
     // Coroutines
     implementation(libs.kotlinx.coroutines.android)
@@ -91,3 +111,4 @@ dependencies {
     debugImplementation(libs.androidx.ui.tooling)
     debugImplementation(libs.androidx.ui.test.manifest)
 }
+
