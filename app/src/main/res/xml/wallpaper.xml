@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Wallpaper descriptor file.
+    'settingsActivity' points to MainActivity so the system "Settings" button
+    in the wallpaper picker opens the app's configuration screen.
+-->
+<wallpaper xmlns:android="http://schemas.android.com/apk/res/android"
+    android:description="@string/wallpaper_description"
+    android:label="@string/wallpaper_label"
+    android:settingsActivity="com.stanly.wallpapermovil.MainActivity"
+    android:thumbnail="@mipmap/ic_launcher" />

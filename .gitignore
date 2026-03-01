@@ -1,0 +1,30 @@
+# Android
+*.iml
+.gradle/
+local.properties
+.idea/
+.DS_Store
+build/
+captures/
+.externalNativeBuild/
+.cxx/
+*.apk
+*.aab
+*.ap_
+*.dex
+
+# Kotlin
+*.class
+
+# Generated files
+bin/
+gen/
+out/
+release/
+
+# Keystore files – NEVER commit real keystores
+*.jks
+*.keystore
+
+# Gradle cache (but keep wrapper JAR and scripts)
+.gradle/

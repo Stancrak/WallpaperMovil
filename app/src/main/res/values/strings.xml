@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">WallpaperMovil</string>
+    <string name="wallpaper_label">WallpaperMovil</string>
+    <string name="wallpaper_description">Reproduce un video local o URL como fondo animado</string>
+</resources>
