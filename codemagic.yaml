@@ -18,6 +18,11 @@ workflows:
         script: |
           echo "sdk.dir=$ANDROID_SDK_ROOT" > "$CM_BUILD_DIR/local.properties"
 
+      - name: Download gradle-wrapper.jar
+        script: |
+          curl -fL "https://raw.githubusercontent.com/gradle/gradle/v8.9.0/gradle/wrapper/gradle-wrapper.jar" \
+            -o "$CM_BUILD_DIR/gradle/wrapper/gradle-wrapper.jar"
+
       - name: Make Gradle wrapper executable
         script: chmod +x "$CM_BUILD_DIR/gradlew"
 
@@ -56,6 +61,11 @@ workflows:
       - name: Generate local.properties
         script: |
           echo "sdk.dir=$ANDROID_SDK_ROOT" > "$CM_BUILD_DIR/local.properties"
+
+      - name: Download gradle-wrapper.jar
+        script: |
+          curl -fL "https://raw.githubusercontent.com/gradle/gradle/v8.9.0/gradle/wrapper/gradle-wrapper.jar" \
+            -o "$CM_BUILD_DIR/gradle/wrapper/gradle-wrapper.jar"
 
       - name: Make Gradle wrapper executable
         script: chmod +x "$CM_BUILD_DIR/gradlew"
