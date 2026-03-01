@@ -6,7 +6,6 @@ import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
-import androidx.media3.effect.Crop
 import androidx.media3.exoplayer.ExoPlayer
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -19,13 +18,18 @@ import kotlinx.coroutines.launch
  * Live Wallpaper service powered by AndroidX Media3 ExoPlayer.
  *
  * Battery optimization:
- *  - Pauses when wallpaper is not visible (onVisibilityChanged false).
- *  - Resumes when home screen returns.
- *  - Resources released in onDestroy.
+ *  - Pauses on onVisibilityChanged(false) — user opens another app.
+ *  - Resumes on onVisibilityChanged(true).
+ *  - All resources released in onDestroy.
  *
- * Visual quality:
- *  - Playback starts only after onRenderedFirstFrame to avoid black flash.
- *  - Zoom / pan applied via media3-effect Crop GL effect.
+ * Black-preview fix:
+ *  - play() is called from the onRenderedFirstFrame listener so the surface
+ *    never shows a black frame — the video only starts presenting once the
+ *    first decoded frame is ready.
+ *
+ * NOTE: zoom/offsetX/offsetY stored in DataStore are used by the AdjustScreen
+ * preview; the live wallpaper uses SCALE_TO_FIT_WITH_CROPPING which fills the
+ * screen without letterboxing. Full GL-based crop will be a future enhancement.
  */
 class VideoWallpaperService : WallpaperService() {
 
@@ -61,7 +65,6 @@ class VideoWallpaperService : WallpaperService() {
             super.onSurfaceDestroyed(holder)
         }
 
-        /** Battery optimization: pause/resume based on wallpaper visibility. */
         override fun onVisibilityChanged(visible: Boolean) {
             super.onVisibilityChanged(visible)
             isVisible = visible
@@ -89,11 +92,11 @@ class VideoWallpaperService : WallpaperService() {
                     exo.setAudioAttributes(audioAttributes, false)
                     exo.repeatMode = Player.REPEAT_MODE_ALL
                     exo.volume = 0f
-                    // Scale to fill, cropping instead of letterboxing
+                    // Fill screen without letterboxing
                     exo.setVideoScalingMode(C.VIDEO_SCALING_MODE_SCALE_TO_FIT_WITH_CROPPING)
                     exo.setVideoSurface(surfaceHolder.surface)
 
-                    // Fix black preview: start playback only after first frame is ready
+                    // Black-preview fix: start playback only after first frame is decoded
                     exo.addListener(object : Player.Listener {
                         override fun onRenderedFirstFrame() {
                             if (isVisible) exo.play()
@@ -108,44 +111,16 @@ class VideoWallpaperService : WallpaperService() {
                     .collectLatest { config ->
                         val exo = player ?: return@collectLatest
 
-                        // Reload media only when URI changes (avoid re-buffering)
                         if (config.videoUri.isNotBlank() && config.videoUri != currentUri) {
                             currentUri = config.videoUri
                             exo.setMediaItem(MediaItem.fromUri(config.videoUri))
-                            applyCropEffect(exo, config.zoom, config.offsetX, config.offsetY)
                             exo.prepare()
-                            // play() will be triggered by onRenderedFirstFrame
-                        } else if (config.videoUri.isNotBlank()) {
-                            // URI unchanged — only update effects/volume live
-                            applyCropEffect(exo, config.zoom, config.offsetX, config.offsetY)
+                            // play() is triggered by onRenderedFirstFrame listener
                         }
 
                         exo.volume = if (config.isMuted) 0f else 1f
                     }
             }
-        }
-
-        /**
-         * Applies a [Crop] GL effect to [exo] based on zoom and pan values.
-         * When zoom == 1 and offsets == 0, no effect is applied (full frame).
-         */
-        private fun applyCropEffect(
-            exo: ExoPlayer,
-            zoom: Float,
-            offsetX: Float,
-            offsetY: Float
-        ) {
-            val zoomClamped = zoom.coerceIn(1f, 4f)
-            if (zoomClamped <= 1.01f && offsetX == 0f && offsetY == 0f) {
-                exo.setVideoEffects(emptyList())
-                return
-            }
-            val halfSize = 1f / zoomClamped
-            val left   = (offsetX - halfSize).coerceIn(-1f, 1f)
-            val right  = (offsetX + halfSize).coerceIn(-1f, 1f)
-            val bottom = (offsetY - halfSize).coerceIn(-1f, 1f)
-            val top    = (offsetY + halfSize).coerceIn(-1f, 1f)
-            exo.setVideoEffects(listOf(Crop(left, right, bottom, top)))
         }
     }
 }
