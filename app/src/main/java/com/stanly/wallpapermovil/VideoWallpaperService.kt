@@ -87,7 +87,15 @@ class VideoWallpaperService : WallpaperService() {
                     exo.repeatMode = Player.REPEAT_MODE_ALL
                     exo.volume = 0f
                     exo.setVideoScalingMode(C.VIDEO_SCALING_MODE_SCALE_TO_FIT_WITH_CROPPING)
-                    // Surface set in onSurfaceCreated (after thumbnail is drawn)
+                    
+                    // Auto-recover if Android destroys the hardware decoder during screen sleep
+                    exo.addListener(object : Player.Listener {
+                        override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                            exo.prepare()
+                        }
+                    })
+
+                    // Surface set in onSurfaceCreated
                     exo.playWhenReady = true
                 }
         }
@@ -100,7 +108,10 @@ class VideoWallpaperService : WallpaperService() {
 
                         cachedThumbPath = config.thumbnailPath
 
-                        if (config.videoUri.isNotBlank() && config.videoUri != currentUri) {
+                        val hasError = exo.playerError != null || exo.playbackState == Player.STATE_IDLE
+                        
+                        // Re-load if URI changed OR if the player died (hardware decoder lost)
+                        if (config.videoUri.isNotBlank() && (config.videoUri != currentUri || hasError)) {
                             currentUri = config.videoUri
                             exo.setMediaItem(MediaItem.fromUri(config.videoUri))
                             exo.prepare()
