@@ -69,18 +69,20 @@ fun AddWallpaperScreen(
     var selectedUri by remember { mutableStateOf<Uri?>(null) }
 
     val filePicker = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetContent()
+        contract = ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
         uri?.let {
             try {
+                // This now actually persists because OpenDocument grants the flag
                 context.contentResolver.takePersistableUriPermission(
                     it, Intent.FLAG_GRANT_READ_URI_PERMISSION
                 )
-            } catch (_: SecurityException) { /* some providers skip this */ }
+            } catch (_: SecurityException) { /* catch just in case */ }
             selectedUri = it
             urlText = it.toString()
         }
     }
+
 
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -130,7 +132,7 @@ fun AddWallpaperScreen(
 
             // ── Selector de archivo ───────────────────────────────────────────
             OutlinedButton(
-                onClick = { filePicker.launch("video/*") },
+                onClick = { filePicker.launch(arrayOf("video/*")) },
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Icon(Icons.Default.FolderOpen, contentDescription = null)
