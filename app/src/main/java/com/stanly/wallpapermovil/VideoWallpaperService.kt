@@ -5,6 +5,7 @@ import android.view.SurfaceHolder
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
+import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -14,17 +15,13 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
 /**
- * Live Wallpaper service powered by AndroidX Media3 ExoPlayer.
+ * Live Wallpaper service — ExoPlayer-based.
  *
- * Design principles (simplified to avoid race conditions):
- *  1. playWhenReady = TRUE from the moment the player is created.
- *     ExoPlayer auto-plays as soon as it reaches READY state.
- *  2. onVisibilityChanged simply flips playWhenReady on/off for battery.
- *  3. observePreferences always calls setMediaItem + prepare when URI
- *     changes. Since playWhenReady is already true, playback starts
- *     automatically when the player finishes buffering.
- *  4. Surface is set both in initPlayer (onCreate) and in onSurfaceCreated
- *     to handle both fast and slow surface creation paths.
+ * Playback strategy (no race conditions):
+ *  - playWhenReady = true at creation → auto-starts when READY.
+ *  - onVisibilityChanged calls play()/pause() explicitly.
+ *  - observePreferences also calls play() if already visible when URI loads
+ *    (handles the case where visibility=true before DataStore emits).
  */
 class VideoWallpaperService : WallpaperService() {
 
@@ -34,9 +31,8 @@ class VideoWallpaperService : WallpaperService() {
 
         private var player: ExoPlayer? = null
         private val scope = CoroutineScope(Dispatchers.Main + Job())
+        private var isVisible = true   // true until first onVisibilityChanged
         private var currentUri = ""
-
-        // ── Lifecycle ─────────────────────────────────────────────────────────
 
         override fun onCreate(surfaceHolder: SurfaceHolder) {
             super.onCreate(surfaceHolder)
@@ -46,7 +42,6 @@ class VideoWallpaperService : WallpaperService() {
 
         override fun onSurfaceCreated(holder: SurfaceHolder) {
             super.onSurfaceCreated(holder)
-            // Re-attach in case the surface wasn't valid during onCreate
             player?.setVideoSurface(holder.surface)
         }
 
@@ -56,14 +51,15 @@ class VideoWallpaperService : WallpaperService() {
         }
 
         override fun onSurfaceDestroyed(holder: SurfaceHolder) {
-            player?.clearVideoSurface()
+            player?.setVideoSurface(null)
             super.onSurfaceDestroyed(holder)
         }
 
-        /** Battery optimization: pause when home screen is hidden. */
+        /** Battery optimization — pause when home hidden, resume when visible. */
         override fun onVisibilityChanged(visible: Boolean) {
             super.onVisibilityChanged(visible)
-            player?.playWhenReady = visible
+            isVisible = visible
+            if (visible) player?.play() else player?.pause()
         }
 
         override fun onDestroy() {
@@ -73,30 +69,22 @@ class VideoWallpaperService : WallpaperService() {
             super.onDestroy()
         }
 
-        // ── Private helpers ───────────────────────────────────────────────────
-
         private fun initPlayer(surfaceHolder: SurfaceHolder) {
+            val audioAttrs = AudioAttributes.Builder()
+                .setUsage(C.USAGE_MEDIA)
+                .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
+                .build()
+
             player = ExoPlayer.Builder(this@VideoWallpaperService)
                 .build()
-                .apply {
-                    setAudioAttributes(
-                        AudioAttributes.Builder()
-                            .setUsage(C.USAGE_MEDIA)
-                            .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
-                            .build(),
-                        /* handleAudioFocus= */ false
-                    )
-                    repeatMode = ExoPlayer.REPEAT_MODE_ALL
-                    volume = 0f
-                    setVideoScalingMode(C.VIDEO_SCALING_MODE_SCALE_TO_FIT_WITH_CROPPING)
-
-                    // Attach the surface now; onSurfaceCreated will re-attach once
-                    // the surface is fully ready, which is harmless.
-                    setVideoSurface(surfaceHolder.surface)
-
-                    // Auto-play as soon as buffering finishes.
-                    // onVisibilityChanged will pause/resume via playWhenReady.
-                    playWhenReady = true
+                .also { exo ->
+                    exo.setAudioAttributes(audioAttrs, false)
+                    exo.repeatMode = Player.REPEAT_MODE_ALL
+                    exo.volume = 0f
+                    exo.setVideoScalingMode(C.VIDEO_SCALING_MODE_SCALE_TO_FIT_WITH_CROPPING)
+                    exo.setVideoSurface(surfaceHolder.surface)
+                    // Start playing as soon as buffering finishes
+                    exo.playWhenReady = true
                 }
         }
 
@@ -109,8 +97,9 @@ class VideoWallpaperService : WallpaperService() {
                         if (config.videoUri.isNotBlank() && config.videoUri != currentUri) {
                             currentUri = config.videoUri
                             exo.setMediaItem(MediaItem.fromUri(config.videoUri))
-                            // playWhenReady is already true → auto-plays when READY
                             exo.prepare()
+                            // If visibility already arrived before DataStore, arm playback now
+                            if (isVisible) exo.play()
                         }
 
                         exo.volume = if (config.isMuted) 0f else 1f
