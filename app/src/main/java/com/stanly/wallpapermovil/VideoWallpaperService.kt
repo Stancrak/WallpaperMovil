@@ -5,7 +5,6 @@ import android.view.SurfaceHolder
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
-import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -17,13 +16,15 @@ import kotlinx.coroutines.launch
 /**
  * Live Wallpaper service powered by AndroidX Media3 ExoPlayer.
  *
- * Key design decisions:
- *  - Uses `playWhenReady` instead of `onRenderedFirstFrame` listener.
- *    This avoids a bug where the listener fires while the wallpaper is not
- *    yet visible (system picker preview), causing the flag-check to skip
- *    play() permanently → black wallpaper on home screen.
- *  - Pauses on onVisibilityChanged(false) → battery optimization.
- *  - Resumes on onVisibilityChanged(true).
+ * Design principles (simplified to avoid race conditions):
+ *  1. playWhenReady = TRUE from the moment the player is created.
+ *     ExoPlayer auto-plays as soon as it reaches READY state.
+ *  2. onVisibilityChanged simply flips playWhenReady on/off for battery.
+ *  3. observePreferences always calls setMediaItem + prepare when URI
+ *     changes. Since playWhenReady is already true, playback starts
+ *     automatically when the player finishes buffering.
+ *  4. Surface is set both in initPlayer (onCreate) and in onSurfaceCreated
+ *     to handle both fast and slow surface creation paths.
  */
 class VideoWallpaperService : WallpaperService() {
 
@@ -33,8 +34,9 @@ class VideoWallpaperService : WallpaperService() {
 
         private var player: ExoPlayer? = null
         private val scope = CoroutineScope(Dispatchers.Main + Job())
-        private var isVisible = true
         private var currentUri = ""
+
+        // ── Lifecycle ─────────────────────────────────────────────────────────
 
         override fun onCreate(surfaceHolder: SurfaceHolder) {
             super.onCreate(surfaceHolder)
@@ -44,6 +46,7 @@ class VideoWallpaperService : WallpaperService() {
 
         override fun onSurfaceCreated(holder: SurfaceHolder) {
             super.onSurfaceCreated(holder)
+            // Re-attach in case the surface wasn't valid during onCreate
             player?.setVideoSurface(holder.surface)
         }
 
@@ -53,46 +56,47 @@ class VideoWallpaperService : WallpaperService() {
         }
 
         override fun onSurfaceDestroyed(holder: SurfaceHolder) {
-            player?.setVideoSurface(null)
+            player?.clearVideoSurface()
             super.onSurfaceDestroyed(holder)
         }
 
-        /** Battery optimization: pause when off-screen, resume when visible. */
+        /** Battery optimization: pause when home screen is hidden. */
         override fun onVisibilityChanged(visible: Boolean) {
             super.onVisibilityChanged(visible)
-            isVisible = visible
-            if (visible) {
-                // Resume — also re-arms playWhenReady in case the player
-                // was prepared while invisible
-                player?.playWhenReady = true
-            } else {
-                player?.pause()
-            }
+            player?.playWhenReady = visible
         }
 
         override fun onDestroy() {
+            scope.cancel()
             player?.release()
             player = null
-            scope.cancel()
             super.onDestroy()
         }
 
-        private fun initPlayer(surfaceHolder: SurfaceHolder) {
-            val audioAttributes = AudioAttributes.Builder()
-                .setUsage(C.USAGE_MEDIA)
-                .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
-                .build()
+        // ── Private helpers ───────────────────────────────────────────────────
 
+        private fun initPlayer(surfaceHolder: SurfaceHolder) {
             player = ExoPlayer.Builder(this@VideoWallpaperService)
                 .build()
-                .also { exo ->
-                    exo.setAudioAttributes(audioAttributes, false)
-                    exo.repeatMode = Player.REPEAT_MODE_ALL
-                    exo.volume = 0f
-                    // Fill screen without letterboxing
-                    exo.setVideoScalingMode(C.VIDEO_SCALING_MODE_SCALE_TO_FIT_WITH_CROPPING)
-                    exo.setVideoSurface(surfaceHolder.surface)
-                    // playWhenReady is set in observePreferences() and onVisibilityChanged()
+                .apply {
+                    setAudioAttributes(
+                        AudioAttributes.Builder()
+                            .setUsage(C.USAGE_MEDIA)
+                            .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
+                            .build(),
+                        /* handleAudioFocus= */ false
+                    )
+                    repeatMode = ExoPlayer.REPEAT_MODE_ALL
+                    volume = 0f
+                    setVideoScalingMode(C.VIDEO_SCALING_MODE_SCALE_TO_FIT_WITH_CROPPING)
+
+                    // Attach the surface now; onSurfaceCreated will re-attach once
+                    // the surface is fully ready, which is harmless.
+                    setVideoSurface(surfaceHolder.surface)
+
+                    // Auto-play as soon as buffering finishes.
+                    // onVisibilityChanged will pause/resume via playWhenReady.
+                    playWhenReady = true
                 }
         }
 
@@ -105,11 +109,7 @@ class VideoWallpaperService : WallpaperService() {
                         if (config.videoUri.isNotBlank() && config.videoUri != currentUri) {
                             currentUri = config.videoUri
                             exo.setMediaItem(MediaItem.fromUri(config.videoUri))
-                            // KEY FIX: set playWhenReady to current visibility at
-                            // prepare-time, not at initPlayer-time. This handles the
-                            // race where onVisibilityChanged fires before DataStore
-                            // emits the URI (common in the system wallpaper picker).
-                            exo.playWhenReady = isVisible
+                            // playWhenReady is already true → auto-plays when READY
                             exo.prepare()
                         }
 
