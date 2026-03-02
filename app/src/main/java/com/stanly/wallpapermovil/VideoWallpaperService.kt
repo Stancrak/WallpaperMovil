@@ -61,9 +61,13 @@ class VideoWallpaperService : WallpaperService() {
         override fun onVisibilityChanged(visible: Boolean) {
             super.onVisibilityChanged(visible)
             isVisible = visible
-            // playWhenReady on the player keeps state in sync even before
-            // the first media item is loaded.
-            player?.playWhenReady = visible
+            if (visible) {
+                // Resume — also re-arms playWhenReady in case the player
+                // was prepared while invisible
+                player?.playWhenReady = true
+            } else {
+                player?.pause()
+            }
         }
 
         override fun onDestroy() {
@@ -85,11 +89,10 @@ class VideoWallpaperService : WallpaperService() {
                     exo.setAudioAttributes(audioAttributes, false)
                     exo.repeatMode = Player.REPEAT_MODE_ALL
                     exo.volume = 0f
-                    // Fill the screen without letterboxing
+                    // Fill screen without letterboxing
                     exo.setVideoScalingMode(C.VIDEO_SCALING_MODE_SCALE_TO_FIT_WITH_CROPPING)
                     exo.setVideoSurface(surfaceHolder.surface)
-                    // Will play automatically when ExoPlayer reaches READY state
-                    exo.playWhenReady = isVisible
+                    // playWhenReady is set in observePreferences() and onVisibilityChanged()
                 }
         }
 
@@ -102,9 +105,12 @@ class VideoWallpaperService : WallpaperService() {
                         if (config.videoUri.isNotBlank() && config.videoUri != currentUri) {
                             currentUri = config.videoUri
                             exo.setMediaItem(MediaItem.fromUri(config.videoUri))
+                            // KEY FIX: set playWhenReady to current visibility at
+                            // prepare-time, not at initPlayer-time. This handles the
+                            // race where onVisibilityChanged fires before DataStore
+                            // emits the URI (common in the system wallpaper picker).
+                            exo.playWhenReady = isVisible
                             exo.prepare()
-                            // playWhenReady=true/false is already set;
-                            // ExoPlayer will auto-play when it reaches READY state
                         }
 
                         exo.volume = if (config.isMuted) 0f else 1f
