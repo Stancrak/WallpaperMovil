@@ -52,11 +52,12 @@ class WallpaperViewModel(app: Application) : AndroidViewModel(app) {
             WallpaperPreferences.saveConfig(
                 getApplication(),
                 WallpaperConfig(
-                    videoUri = item.uri,
-                    isMuted  = item.isMuted,
-                    zoom     = item.zoom,
-                    offsetX  = item.offsetX,
-                    offsetY  = item.offsetY
+                    videoUri      = item.uri,
+                    isMuted       = item.isMuted,
+                    zoom          = item.zoom,
+                    offsetX       = item.offsetX,
+                    offsetY       = item.offsetY,
+                    thumbnailPath = item.thumbnailPath
                 )
             )
             val intent = Intent(WallpaperManager.ACTION_CHANGE_LIVE_WALLPAPER).apply {

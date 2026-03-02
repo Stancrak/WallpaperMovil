@@ -115,16 +115,21 @@ fun AdjustScreen(
 
     fun applyWallpaper() {
         scope.launch {
-            // 1. Save config to DataStore
-            WallpaperPreferences.saveConfig(
-                context,
-                WallpaperConfig(videoUri = uri, isMuted = isMuted,
-                    zoom = zoom, offsetX = offsetX, offsetY = offsetY)
-            )
-            // 2. Extract thumbnail (background thread)
+            // 1. Extract thumbnail FIRST so it can be stored in the config
             val thumbPath = withContext(Dispatchers.IO) {
                 ThumbnailHelper.extractAndSave(context, uri)
             } ?: ""
+
+            // 2. Save full config (including thumbnailPath) to DataStore
+            WallpaperPreferences.saveConfig(
+                context,
+                WallpaperConfig(
+                    videoUri = uri, isMuted = isMuted,
+                    zoom = zoom, offsetX = offsetX, offsetY = offsetY,
+                    thumbnailPath = thumbPath
+                )
+            )
+
             // 3. Add to library
             val label = uri.substringAfterLast("/").take(28)
                 .ifBlank { "Fondo ${System.currentTimeMillis() % 10_000}" }
@@ -132,7 +137,8 @@ fun AdjustScreen(
                 WallpaperItem(uri = uri, label = label, thumbnailPath = thumbPath,
                     isMuted = isMuted, zoom = zoom, offsetX = offsetX, offsetY = offsetY)
             )
-            // 4. Launch system picker — it handles home/lock/both selection natively
+
+            // 4. Launch system picker (config with thumbnail is now saved)
             val intent = Intent(WallpaperManager.ACTION_CHANGE_LIVE_WALLPAPER).apply {
                 putExtra(WallpaperManager.EXTRA_LIVE_WALLPAPER_COMPONENT,
                     ComponentName(context, VideoWallpaperService::class.java))
