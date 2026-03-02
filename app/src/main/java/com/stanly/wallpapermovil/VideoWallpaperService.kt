@@ -20,12 +20,10 @@ import kotlinx.coroutines.withContext
 /**
  * Live Wallpaper service — ExoPlayer-based.
  *
- * Thumbnail-first strategy (eliminates black preview):
- *  1. When the surface is created, immediately draw the cached thumbnail
- *     from disk to the Canvas so the picker preview is never black.
- *  2. THEN attach the surface to ExoPlayer. Once ExoPlayer renders its
- *     first frame, it overwrites the thumbnail and the video plays live.
- *  3. playWhenReady = true + onVisibilityChanged pause/resume for battery.
+ * Playback strategy (no race conditions):
+ *  - playWhenReady = true at creation → auto-starts when READY.
+ *  - onVisibilityChanged calls play()/pause() explicitly.
+ *  - observePreferences also calls play() if already visible when URI loads
  */
 class VideoWallpaperService : WallpaperService() {
 
@@ -45,19 +43,10 @@ class VideoWallpaperService : WallpaperService() {
             observePreferences()
         }
 
-        /**
-         * Draw thumbnail first, then give the surface to ExoPlayer.
-         * This gives instant visual feedback and avoids the black preview.
-         */
         override fun onSurfaceCreated(holder: SurfaceHolder) {
             super.onSurfaceCreated(holder)
-            scope.launch {
-                // Load and draw thumbnail on IO → Main, before setVideoSurface
-                drawThumbnailToHolder(holder)
-                // Now hand the surface to ExoPlayer
-                player?.setVideoSurface(holder.surface)
-                if (isVisible) player?.play()
-            }
+            player?.setVideoSurface(holder.surface)
+            if (isVisible) player?.play()
         }
 
         override fun onSurfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
@@ -123,29 +112,6 @@ class VideoWallpaperService : WallpaperService() {
             }
         }
 
-        /**
-         * Loads the cached thumbnail bitmap from disk on an IO thread and
-         * draws it to the SurfaceHolder canvas. This fills the preview with
-         * the last known frame instead of black while ExoPlayer buffers.
-         */
-        private suspend fun drawThumbnailToHolder(holder: SurfaceHolder) {
-            val path = cachedThumbPath
-            if (path.isBlank()) return
 
-            val bmp = withContext(Dispatchers.IO) {
-                runCatching { BitmapFactory.decodeFile(path) }.getOrNull()
-            } ?: return
-
-            try {
-                val canvas = holder.lockCanvas() ?: return
-                val dst = RectF(0f, 0f, canvas.width.toFloat(), canvas.height.toFloat())
-                canvas.drawBitmap(bmp, null, dst, null)
-                holder.unlockCanvasAndPost(canvas)
-            } catch (_: Exception) {
-                // Surface might not be ready — silently ignore
-            } finally {
-                bmp.recycle()
-            }
-        }
     }
 }
